@@ -17,7 +17,19 @@
         "properties": {
           "x": {
             "description": "x values",
-            "type": "integer",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string",
+                "format": "date"
+              }
+            ],
             "minimum": 1
           },
           "y": {
@@ -30,9 +42,15 @@
             "type": "string"
           }
         },
-        "required": ["x", "y"]
+        "required": [
+          "x",
+          "y"
+        ]
       }
     }
   },
-  "required": ["Title", "values"]
+  "required": [
+    "Title",
+    "values"
+  ]
 }

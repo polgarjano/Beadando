@@ -47,4 +47,6 @@ def readFromFile(path):
 
 if __name__ == '__main__':
     print("hello")
-    draw(readFromFile('./json/example1.json'))
+    print(True == is_valid(readFromFile('./json/example1.json')))
+    print(False == is_valid(readFromFile('./json/example2.json')))
+    draw(readFromFile('./json/example_date.json'))

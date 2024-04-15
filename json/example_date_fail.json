@@ -1,0 +1,35 @@
+{
+  "Title": "Example Diagram",
+  "values": [
+    {
+      "x": "asd",
+      "y": 20,
+      "classifier": "A"
+    },
+    {
+      "x": "ads",
+      "y": 25,
+      "classifier": "B"
+    },
+    {
+      "x": "sad",
+      "y": 30,
+      "classifier": "C"
+    },
+    {
+      "x": "asd",
+      "y": 30,
+      "classifier": "C"
+    },
+    {
+      "x": "alma",
+      "y": 30,
+      "classifier": "C"
+    },
+    {
+      "x": "asd",
+      "y": 30,
+      "classifier": "C"
+    }
+  ]
+}
