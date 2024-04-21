@@ -25,7 +25,7 @@ def is_valid(json_str):
         return False
 
 
-def draw_diagram(title, x, y):
+def draw_scater(title, x, y):
     data = {
         "x": x,
         "y": y}
@@ -41,7 +41,7 @@ def draw_diagram(title, x, y):
 
 def draw(json_string):
     if not is_valid(json_string):
-        draw_diagram("ERROR",[],[])
+        draw_scater("ERROR", [], [])
         return
 
     json_data = json.loads(json_string)
