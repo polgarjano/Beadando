@@ -4,16 +4,15 @@ import json
 from jsonschema import validate, ValidationError
 import plotly.express as px
 
-
-
 schema = ""
 
 with open('./json/statisticInterface.json', 'r') as file:
     lines = file.readlines()
-    schema ="".join(lines)
+    schema = "".join(lines)
     schema = json.loads(schema)
 
 print(schema)
+
 
 def is_valid(json_str):
     try:
@@ -26,14 +25,29 @@ def is_valid(json_str):
         return False
 
 
-def draw(json_string):
-     if not is_valid(json_string):
-         raise  ValidationError
+def draw_diagram(title, x, y):
+    data = {
+        "x": x,
+        "y": y}
 
-     json_data = json.loads(json_string)
-     df = pd.DataFrame(json_data['values'])
-     fig = px.line(df, x='x', y='y', color='classifier', markers=True,title=json_data['Title'])
-     fig.show()
+    df = pd.DataFrame(data)
+
+    # Create a scatter plot
+    fig = px.scatter(df, x='x', y='y', title=title)
+
+    # Display the plot
+    fig.show()
+
+
+def draw(json_string):
+    if not is_valid(json_string):
+        draw_diagram("ERROR",[],[])
+        return
+
+    json_data = json.loads(json_string)
+    df = pd.DataFrame(json_data['values'])
+    fig = px.line(df, x='x', y='y', color='classifier', markers=True, title=json_data['Title'])
+    fig.show()
 
 
 def readFromFile(path):
@@ -50,3 +64,4 @@ if __name__ == '__main__':
     print(True == is_valid(readFromFile('./json/example1.json')))
     print(False == is_valid(readFromFile('./json/example2.json')))
     draw(readFromFile('./json/example_date.json'))
+    draw(readFromFile('./json/example2.json'))
