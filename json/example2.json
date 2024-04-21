@@ -1,0 +1,35 @@
+{
+  "Title": "Example Diagram",
+  "values": [
+    {
+      "x": 10,
+      "z": 20,
+      "classifier": "A"
+    },
+    {
+      "x": 15,
+      "y": 25,
+      "classifier": "B"
+    },
+    {
+      "x": 20,
+      "y": 30,
+      "classifier": "C"
+    },
+    {
+      "x": 25,
+      "y": 30,
+      "classifier": "C"
+    },
+    {
+      "x": 27,
+      "y": 30,
+      "classifier": "C"
+    },
+    {
+      "x": 29,
+      "y": 30,
+      "classifier": "C"
+    }
+  ]
+}

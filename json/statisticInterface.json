@@ -1,0 +1,56 @@
+{
+  "$id": "https://json-schema.hyperjump.io/schema2",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InterfaceDiag",
+  "description": "Data for a diagram",
+  "type": "object",
+  "properties": {
+    "Title": {
+      "description": "Title of the diagram",
+      "type": "string"
+    },
+    "values": {
+      "description": "The data from a club",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "description": "x values",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string",
+                "format": "date"
+              }
+            ],
+            "minimum": 1
+          },
+          "y": {
+            "description": "y values",
+            "type": "integer",
+            "minimum": 1
+          },
+          "classifier": {
+            "description": "some kind of classifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ]
+      }
+    }
+  },
+  "required": [
+    "Title",
+    "values"
+  ]
+}
