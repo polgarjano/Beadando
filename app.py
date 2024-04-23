@@ -6,34 +6,32 @@ import datetime
 from passlib.hash import bcrypt
 from enum import Enum
 
-#Password must contain one digit from 1 to 9, one lowercase letter, one uppercase letter, one special character,
-#no space, and it must be 8-16 characters long
+# Password must contain one digit from 1 to 9, one lowercase letter, one uppercase letter, one special character,
+# no space, and it must be 8-16 characters long
 PASSWORD_REGEXP = r"^(?=.*[0-9])(?=.*[a-z])(?=.*[A-Z])(?=.*\W)(?!.* ).{8,16}$"
+DATE_REGEXP = r"^(?:(?:19|20)\d{2})-(?:(?:0[1-9]|1[0-2]))-(?:(?:0[1-9]|1\d|2\d|3[01]))$"
+
 
 class Permissions(Enum):
     ADMINISTRATOR = "administrator"
     COACH = "coach"
     USER = "user"
 
+
 class System_data(Enum):
     SESSION = "session"
     ID = "id"
     PASSWORD = "password"
+
 
 class Personal_data(Enum):
     CLUB = "club"
     NAME = "name"
 
 
-
-
-class Events(Enum):
+class COMPETITION_EVENTS(Enum):
     Air_Pistol_Men = "Air_Pistol_Men"
     Air_Pistol_Women_Junior = "Air_Pistol_Women_Junior"
-
-
-class AgeGroup(Enum):
-    JUNIOR = "junior"
 
 
 app = Flask(__name__)
@@ -97,7 +95,7 @@ def authorization(actual_user, permisons):
     return (True, user_info)
 
 
-def register(username, password, club_name, permissions, is_club_exists,):
+def register(username, password, club_name, permissions, is_club_exists, ):
     if not bool(re.match(PASSWORD_REGEXP, password)):
         return jsonify(message='Password to weak'), 400
     id = master.incr("id")
@@ -126,8 +124,6 @@ def register(username, password, club_name, permissions, is_club_exists,):
             if not is_club_exists:
                 pipe.hset(club_name, "activ", "1")
 
-
-
             results = pipe.execute()
             print(results)
         except Exception as e:
@@ -154,7 +150,7 @@ def register_administrator():
     if not username or not password or not club_name:
         return jsonify(message='Username , password and club name are required'), 400
 
-    return register(username, password, club_name, [Permissions.ADMINISTRATOR.value,Permissions.USER.value], False)
+    return register(username, password, club_name, [Permissions.ADMINISTRATOR.value, Permissions.USER.value], False)
 
 
 # Login endpoint
@@ -166,10 +162,8 @@ def login():
 
     # Check if user exists in Redis and can login
     permission = master.hget(username, Permissions.USER.value)
-    if permission is None or  not master.hget(username, Permissions.USER.value).decode() == '1':
+    if permission is None or not master.hget(username, Permissions.USER.value).decode() == '1':
         return jsonify(message='Invalid password or username'), 404
-
-
 
     stored_hashed_password = master.hget(username, "password").decode()
 
@@ -247,7 +241,7 @@ def register_coach():
     if not username or not password or not club_name:
         return jsonify(message='Username and password name are required'), 400
 
-    return register(username, password, club_name, [Permissions.COACH.value,Permissions.USER.value], True)
+    return register(username, password, club_name, [Permissions.COACH.value, Permissions.USER.value], True)
 
 
 # Competitor registration endpoint
@@ -275,7 +269,7 @@ def register_compatitor():
 
     register_sattus = register(bibn, "123abcEFG?", club_name, [], True)
     if register_sattus[1] == 201:
-        master.hset(coach, "_"+bibn, name)
+        master.hset(coach, "_" + bibn, name)
         master.hset(bibn, "name", name)
 
     return register_sattus
@@ -301,6 +295,7 @@ def all_competitor_for_coach():
 
     return jsonify(message=user_info), 200
 
+
 @app.route('/coach/competitor', methods=['GET'])
 @jwt_required()  # This decorator requires a valid JWT token
 def competitor_for_coach():
@@ -320,7 +315,112 @@ def competitor_for_coach():
         black_list = [s.value for s in Permissions] + [s.value for s in System_data]
         user_info = {key.decode(): value.decode() for key, value in user_info.items() if key.decode() not in black_list}
 
-        return jsonify(message={bibn:user_info}), 200
+        return jsonify(message={bibn: user_info}), 200
+
+    return jsonify(message="Competitor not found"), 404
+
+
+@app.route('/events', methods=['GET'])
+def evets():
+    return jsonify(message=[s.value for s in COMPETITION_EVENTS]), 200
+
+
+@app.route('/coach/competitor/result', methods=['POST'])
+@jwt_required()  # This decorator requires a valid JWT token
+def add_result():
+    # Get the user identity from the token
+    current_user = get_jwt_identity()
+
+    aut = authorization(current_user, [Permissions.COACH.value])
+    if aut[0] == False:
+        return aut[1], aut[2]
+
+    data = request.get_json()
+    result_data = {}
+    result_data["bibn"] = data.get('bibn')
+    result_data["date"] = data.get('date')
+    result_data["result"] = data.get('result')
+    result_data["event"] = data.get('event')
+
+    for k in result_data:
+        if not result_data[k]:
+            return jsonify(message='BIBno, date, result and event  are required'), 400
+        result_data[k] = str(result_data[k])
+
+
+    if not bool(re.match(r"^\d+$", result_data["result"])):
+        return jsonify(message='result can only contain numbers'), 400
+
+    if not bool(re.match(DATE_REGEXP, result_data["date"])):
+        return jsonify(message='date is in wrong format '), 400
+    valid = False
+    for e in COMPETITION_EVENTS:
+        if e.value == result_data["event"]:
+            valid = True
+    if not valid:
+        return jsonify(message='Unknown event'), 400
+
+    # TODO input validation
+    slave = get_slave()
+    if not slave.hexists(current_user, "_" + result_data["bibn"]):
+        return jsonify(message="Competitor not found"), 404
+
+    id = str(master_results.incr("_" + result_data["bibn"] + "_No"))
+    master_results.sadd("_" + result_data["bibn"] + "_Events", result_data["event"])
+    bibn = result_data.pop("bibn")
+    result_data = {(id + "_" + k): v for k, v in result_data.items()}
+    master_results.hset(("_" + bibn + "_"+result_data[id+"_"+"event"]), mapping=result_data)
+
+    return jsonify(message="New result added"), 201
+
+
+@app.route('/coach/competitor/events', methods=['GET'])
+@jwt_required()  # This decorator requires a valid JWT token
+def get_events_for_competitor():
+    # Get the user identity from the token
+    current_user = get_jwt_identity()
+
+    aut = authorization(current_user, [Permissions.COACH.value])
+    if aut[0] == False:
+        return aut[1], aut[2]
+
+    data = request.get_json()
+    bibn = str(data.get('bibn'))
+
+    slave = get_slave()
+    if slave.hexists(current_user, "_" + bibn):
+        slave = get_slave_results()
+        events = slave.smembers("_"+bibn+"_Events")
+        events = [e.decode() for e in events]
+        return jsonify(message=events), 200
+
+    return jsonify(message="Competitor not found"), 404
+
+@app.route('/coach/competitor/result', methods=['GET'])
+@jwt_required()  # This decorator requires a valid JWT token
+def get_results_for_competitor():
+    # Get the user identity from the token
+    current_user = get_jwt_identity()
+
+    aut = authorization(current_user, [Permissions.COACH.value])
+    if aut[0] == False:
+        return aut[1], aut[2]
+
+    data = request.get_json()
+    bibn = str(data.get('bibn'))
+    event = data.get('event')
+
+    if not event :
+        return jsonify(message='event  is required'), 400
+
+
+
+    slave = get_slave()
+    if slave.hexists(current_user, "_" + bibn):
+        slave = get_slave_results()
+        events = slave.hgetall("_"+bibn+"_"+event)
+        events = {k.decode():v.decode() for k,v in events.items()}
+        return jsonify(message=events), 200
 
     return jsonify(message="Competitor not found"), 404
 
