@@ -1,2 +1,5 @@
 Flask
 redis
+flask_jwt_extended
+passlib
+bcrypt
