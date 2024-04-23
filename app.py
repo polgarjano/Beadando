@@ -1,20 +1,39 @@
 from flask import Flask, request, jsonify
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 import redis
+import re
 import datetime
 from passlib.hash import bcrypt
 from enum import Enum
 
+#Password must contain one digit from 1 to 9, one lowercase letter, one uppercase letter, one special character,
+#no space, and it must be 8-16 characters long
+PASSWORD_REGEXP = r"^(?=.*[0-9])(?=.*[a-z])(?=.*[A-Z])(?=.*\W)(?!.* ).{8,16}$"
 
 class Permissions(Enum):
     ADMINISTRATOR = "administrator"
     COACH = "coach"
+    USER = "user"
 
+class System_data(Enum):
+    SESSION = "session"
+    ID = "id"
+    PASSWORD = "password"
 
 class Personal_data(Enum):
-    PASSWORD = "password"
     CLUB = "club"
-    SESSION = "session"
+    NAME = "name"
+
+
+
+
+class Events(Enum):
+    Air_Pistol_Men = "Air_Pistol_Men"
+    Air_Pistol_Women_Junior = "Air_Pistol_Women_Junior"
+
+
+class AgeGroup(Enum):
+    JUNIOR = "junior"
 
 
 app = Flask(__name__)
@@ -22,13 +41,19 @@ app.config['JWT_SECRET_KEY'] = '0123'  # Use a strong, random key
 jwt = JWTManager(app)
 
 master = redis.Redis(host='localhost', port=6379, db=0)
+master_results = redis.Redis(host='localhost', port=6379, db=1)
 
 slaves = []
+slaves_results = []
 
 slaves.append(redis.Redis(host='localhost', port=6479, db=0))
 slaves.append(redis.Redis(host='localhost', port=6579, db=0))
 
+slaves_results.append(redis.Redis(host='localhost', port=6479, db=1))
+slaves_results.append(redis.Redis(host='localhost', port=6579, db=1))
+
 actual_slave = 0
+actual_slave_results = 0
 
 
 def get_slave():
@@ -37,6 +62,14 @@ def get_slave():
     if actual_slave >= len(slaves):
         actual_slave = 0
     return slaves[actual_slave]
+
+
+def get_slave_results():
+    global actual_slave_results
+    actual_slave_results = actual_slave_results + 1
+    if actual_slave_results >= len(slaves_results):
+        actual_slave_results = 0
+    return slaves_results[actual_slave_results]
 
 
 def permission_validation(actual_user, permisons):
@@ -64,6 +97,46 @@ def authorization(actual_user, permisons):
     return (True, user_info)
 
 
+def register(username, password, club_name, permissions, is_club_exists,):
+    if not bool(re.match(PASSWORD_REGEXP, password)):
+        return jsonify(message='Password to weak'), 400
+    id = master.incr("id")
+    with master.pipeline() as pipe:
+        try:
+            pipe.watch(username)
+
+            if not is_club_exists:
+                pipe.watch(club_name)
+                if pipe.hexists(club_name, "activ"):
+                    return jsonify(message='club name already exists'), 409
+
+            if pipe.hexists(username, "password"):
+                return jsonify(message='Username already exists'), 409
+
+            # Hash the password before storing
+            pipe.multi()
+            hashed_password = bcrypt.hash(password)
+            pipe.hset(username, "password", hashed_password)
+            pipe.hset(username, "club", club_name)
+            for p in permissions:
+                pipe.hset(username, p, 1)
+
+            pipe.hset(username, "id", id)
+
+            if not is_club_exists:
+                pipe.hset(club_name, "activ", "1")
+
+
+
+            results = pipe.execute()
+            print(results)
+        except Exception as e:
+            # If there's an error (like WatchError or other Redis errors), the transaction failed
+            return jsonify(message=e), 409
+
+        return jsonify(message='User registered successfully'), 201
+
+
 @app.route('/')
 def home():
     return "Hello"
@@ -71,7 +144,7 @@ def home():
 
 # User registration endpoint
 @app.route('/register', methods=['POST'])
-def register():
+def register_administrator():
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
@@ -81,31 +154,7 @@ def register():
     if not username or not password or not club_name:
         return jsonify(message='Username , password and club name are required'), 400
 
-    with master.pipeline() as pipe:
-        try:
-            pipe.watch(username)
-            pipe.watch(club_name)
-            if pipe.hexists(username, "password"):
-                return jsonify(message='Username already exists'), 409
-
-            if pipe.hexists(club_name, "activ"):
-                return jsonify(message='club name already exists'), 409
-
-            # Hash the password before storing
-            pipe.multi()
-            hashed_password = bcrypt.hash(password)
-            pipe.hset(username, "password", hashed_password)
-            pipe.hset(username, "club", club_name)
-            pipe.hset(username, Permissions.ADMINISTRATOR.value, 1)
-
-            pipe.hset(club_name, "activ", "1")
-            results = pipe.execute()
-            print(results)
-        except Exception as e:
-            # If there's an error (like WatchError or other Redis errors), the transaction failed
-            return jsonify(message=e), 409
-
-    return jsonify(message='User registered successfully'), 201
+    return register(username, password, club_name, [Permissions.ADMINISTRATOR.value,Permissions.USER.value], False)
 
 
 # Login endpoint
@@ -115,14 +164,14 @@ def login():
     username = data.get('username')
     password = data.get('password')
 
-    # Check if user exists in Redis
-    if not master.hexists(username, "password"):
+    # Check if user exists in Redis and can login
+    permission = master.hget(username, Permissions.USER.value)
+    if permission is None or  not master.hget(username, Permissions.USER.value).decode() == '1':
         return jsonify(message='Invalid password or username'), 404
+
+
 
     stored_hashed_password = master.hget(username, "password").decode()
-
-    if stored_hashed_password == "":
-        return jsonify(message='Invalid password or username'), 404
 
     # Verify the hashed password
     if not bcrypt.verify(password, stored_hashed_password):
@@ -192,33 +241,13 @@ def register_coach():
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
-    club_name = master.hget(username, "club")
+    club_name = master.hget(current_user, "club")
     print(username, password)
-
+    print(club_name)
     if not username or not password or not club_name:
         return jsonify(message='Username and password name are required'), 400
 
-    with master.pipeline() as pipe:
-        try:
-            pipe.watch(username)
-
-            if pipe.hexists(username, "password"):
-                return jsonify(message='Username already exists'), 409
-
-            # Hash the password before storing
-            pipe.multi()
-            hashed_password = bcrypt.hash(password)
-            pipe.hset(username, "password", hashed_password)
-            pipe.hset(username, "club", club_name)
-            pipe.hset(username, Permissions.COACH.value, 1)
-
-            results = pipe.execute()
-            print(results)
-        except Exception as e:
-            # If there's an error (like WatchError or other Redis errors), the transaction failed
-            return jsonify(message=e), 409
-
-    return jsonify(message='User registered successfully'), 201
+    return register(username, password, club_name, [Permissions.COACH.value,Permissions.USER.value], True)
 
 
 # Competitor registration endpoint
@@ -236,28 +265,20 @@ def register_compatitor():
     name = data.get('name')
     coach = current_user
 
+    club_name = get_slave().hget(coach, Personal_data.CLUB.value)
+
     if not bibn or not name:
         return jsonify(message='BIBno and Name  are required'), 400
 
-    with master.pipeline() as pipe:
-        try:
-            pipe.watch(bibn)
+    if not bool(re.match(r"^\d+$", bibn)):
+        return jsonify(message='BIBno can only contain numbers'), 400
 
-            if pipe.hexists(bibn, "password"):
-                return jsonify(message='competitor already exists'), 409
+    register_sattus = register(bibn, "123abcEFG?", club_name, [], True)
+    if register_sattus[1] == 201:
+        master.hset(coach, "_"+bibn, name)
+        master.hset(bibn, "name", name)
 
-            # Hash the password before storing
-            pipe.multi()
-            hashed_password = ""
-            pipe.hset(bibn, "password", hashed_password)
-            pipe.hset(coach, bibn, name)
-            results = pipe.execute()
-            print(results)
-        except Exception as e:
-            # If there's an error (like WatchError or other Redis errors), the transaction failed
-            return jsonify(message="Something went wrong"), 409
-
-    return jsonify(message='Competitor registered successfully'), 201
+    return register_sattus
 
 
 @app.route('/coach/all_competitor', methods=['GET'])
@@ -274,12 +295,35 @@ def all_competitor_for_coach():
 
     user_info = slave.hgetall(current_user)
 
-    personol_data = [s.value for s in Personal_data] + [s.value for s in Permissions]
+    personol_data = [s.value for s in Personal_data] + [s.value for s in Permissions] + [s.value for s in System_data]
 
     user_info = {key.decode(): value.decode() for key, value in user_info.items() if key.decode() not in personol_data}
 
-
     return jsonify(message=user_info), 200
+
+@app.route('/coach/competitor', methods=['GET'])
+@jwt_required()  # This decorator requires a valid JWT token
+def competitor_for_coach():
+    # Get the user identity from the token
+    current_user = get_jwt_identity()
+
+    aut = authorization(current_user, [Permissions.COACH.value])
+    if aut[0] == False:
+        return aut[1], aut[2]
+
+    data = request.get_json()
+    bibn = str(data.get('bibn'))
+
+    slave = get_slave()
+    if slave.hexists(current_user, "_" + bibn):
+        user_info = slave.hgetall(bibn)
+        black_list = [s.value for s in Permissions] + [s.value for s in System_data]
+        user_info = {key.decode(): value.decode() for key, value in user_info.items() if key.decode() not in black_list}
+
+        return jsonify(message={bibn:user_info}), 200
+
+    return jsonify(message="Competitor not found"), 404
+
 
 
 if __name__ == "__main__":
