@@ -9,6 +9,7 @@ services:
     ports:
       - 6379:6379
 
+
   redis-slave:
     image: redis:6.0.7
     container_name: redis_docker-slave
