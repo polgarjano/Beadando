@@ -7,7 +7,7 @@ services:
     volumes:
       - redis_master:/data
     ports:
-      - 6379:6379
+      - 6679:6379
 
 
   redis-slave:
@@ -17,8 +17,8 @@ services:
     volumes:
       - redis_slave:/data
     ports:
-      - 6479:6379
-    command: redis_docker-server --slaveof redis_docker-master 6379
+      - 6779:6379
+    command: docker-server --slaveof redis_docker-master 6679
 
   redis-slave2:
     image: redis:6.0.7
@@ -27,8 +27,8 @@ services:
     volumes:
       - redis_slave2:/data
     ports:
-      - 6579:6379
-    command: redis_docker-server --slaveof redis_docker-master 6379
+      - 6879:6379
+    command: redis_docker-server --slaveof redis_docker-master 6679
 volumes:
   redis_master:
   redis_slave:

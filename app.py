@@ -2,35 +2,19 @@ from flask import Flask, request, jsonify
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 import redis
 import re
-import datetime
 from passlib.hash import bcrypt
 from enum import Enum
-
-# Password must contain one digit from 1 to 9, one lowercase letter, one uppercase letter, one special character,
-# no space, and it must be 8-16 characters long
-PASSWORD_REGEXP = r"^(?=.*[0-9])(?=.*[a-z])(?=.*[A-Z])(?=.*\W)(?!.* ).{8,16}$"
-DATE_REGEXP = r"^(?:(?:19|20)\d{2})-(?:(?:0[1-9]|1[0-2]))-(?:(?:0[1-9]|1\d|2\d|3[01]))$"
-
-
-class Permissions(Enum):
-    ADMINISTRATOR = "administrator"
-    COACH = "coach"
-    USER = "user"
-
-
-class System_data(Enum):
-    SESSION = "session"
-    ID = "id"
-    PASSWORD = "password"
-
-
-class Personal_data(Enum):
-    CLUB = "club"
-    NAME = "name"
+from user_managment.Permissions import Permissions
+from user_managment.Personal_data import Personal_data
+from user_managment.System_data import System_data
+from user_managment.app_regexps import PASSWORD_REGEXP, DATE_REGEXP
+from user_managment.user_managment import register_user, register_entyty, authorization as aut_app, \
+    logout as logout_app, login as login_app
+from user_managment.app_transaction import AppTransaction
 
 
 class COMPETITION_EVENTS(Enum):
-    Air_Pistol_Men = "Air_Pistol_Men"
+    Air_Pistol_Men = "Air_Pistol_Man"
     Air_Pistol_Women_Junior = "Air_Pistol_Women_Junior"
 
 
@@ -78,59 +62,12 @@ def permission_validation(actual_user, permisons):
     return True
 
 
-def authorization(actual_user, permisons):
+def authorization(actual_user, permissions):
+    aut_result = aut_app(master, actual_user, permissions, request.headers.get('Authorization').split(" ")[1])
     # Ensure the session is valid by checking Redis
-    keys = ["session"] + permisons
-    user_info = master.hmget(actual_user, ["session"] + permisons)
-
-    user_info = {keys[i]: user_info[i].decode() for i in range(len(user_info)) if user_info[i] != None}
-
-    if not ("session" in user_info.keys() and user_info["session"] == request.headers.get('Authorization').split(" ")[
-        1]):
+    if aut_result == False:
         return (False, jsonify(message='Unauthorized'), 401)
-
-    if not permission_validation(user_info, permisons):
-        return (False, jsonify(message='Unauthorized'), 401)
-
-    return (True, user_info)
-
-
-def register(username, password, club_name, permissions, is_club_exists, ):
-    if not bool(re.match(PASSWORD_REGEXP, password)):
-        return jsonify(message='Password to weak'), 400
-    id = master.incr("id")
-    with master.pipeline() as pipe:
-        try:
-            pipe.watch(username)
-
-            if not is_club_exists:
-                pipe.watch(club_name)
-                if pipe.hexists(club_name, "activ"):
-                    return jsonify(message='club name already exists'), 409
-
-            if pipe.hexists(username, "password"):
-                return jsonify(message='Username already exists'), 409
-
-            # Hash the password before storing
-            pipe.multi()
-            hashed_password = bcrypt.hash(password)
-            pipe.hset(username, "password", hashed_password)
-            pipe.hset(username, "club", club_name)
-            for p in permissions:
-                pipe.hset(username, p, 1)
-
-            pipe.hset(username, "id", id)
-
-            if not is_club_exists:
-                pipe.hset(club_name, "activ", "1")
-
-            results = pipe.execute()
-            print(results)
-        except Exception as e:
-            # If there's an error (like WatchError or other Redis errors), the transaction failed
-            return jsonify(message=e), 409
-
-        return jsonify(message='User registered successfully'), 201
+    return (True, "")
 
 
 @app.route('/')
@@ -143,14 +80,22 @@ def home():
 def register_administrator():
     data = request.get_json()
     username = data.get('username')
-    password = data.get('password')
-    club_name = data.get('club_name')
-    print(username, password)
+    password = data.get(System_data.PASSWORD.value)
+    club_name = data.get(Personal_data.CLUB.value)
 
     if not username or not password or not club_name:
         return jsonify(message='Username , password and club name are required'), 400
 
-    return register(username, password, club_name, [Permissions.ADMINISTRATOR.value, Permissions.USER.value], False)
+    at = AppTransaction(master.pipeline())
+    user_data = {Personal_data.CLUB.value: club_name}
+    register_user(at, username, password, [Permissions.ADMINISTRATOR.value, Permissions.USER.value], user_data)
+    register_entyty(at, club_name, {"active": 1}, "Club already exists")
+    result = at.execute()
+
+    if result[1] == 200:
+        return jsonify(message='User registered successfully'), 201
+
+    return jsonify(message=result[0]), result[1]
 
 
 # Login endpoint
@@ -159,25 +104,13 @@ def login():
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
-
+    result = login_app(master, username, password, create_access_token, [], {"identity": username})
     # Check if user exists in Redis and can login
-    permission = master.hget(username, Permissions.USER.value)
-    if permission is None or not master.hget(username, Permissions.USER.value).decode() == '1':
+
+    if not result[0]:
         return jsonify(message='Invalid password or username'), 404
 
-    stored_hashed_password = master.hget(username, "password").decode()
-
-    # Verify the hashed password
-    if not bcrypt.verify(password, stored_hashed_password):
-        return jsonify(message='Invalid password or username'), 401
-
-    # Create a JWT token with user identity
-    access_token = create_access_token(identity=username)
-
-    # Store token in Redis to track user session
-    master.hset(username, "session", access_token)
-
-    return jsonify(access_token=access_token), 200
+    return jsonify(access_token=result[1]), 200
 
 
 # Protected endpoint
@@ -215,8 +148,7 @@ def logout():
     current_user = get_jwt_identity()
 
     # Remove the session from Redis to log out
-    master.hdel(current_user, "session")
-
+    logout_app(master, current_user)
     return jsonify(message='Logged out successfully'), 200
 
 
@@ -234,14 +166,22 @@ def register_coach():
 
     data = request.get_json()
     username = data.get('username')
-    password = data.get('password')
-    club_name = master.hget(current_user, "club")
+    password = data.get(System_data.PASSWORD.value)
+    club_name = master.hget(current_user, Personal_data.CLUB.value)
     print(username, password)
     print(club_name)
     if not username or not password or not club_name:
         return jsonify(message='Username and password name are required'), 400
 
-    return register(username, password, club_name, [Permissions.COACH.value, Permissions.USER.value], True)
+    at = AppTransaction(master.pipeline())
+    user_data = {Personal_data.CLUB.value: club_name}
+    register_user(at, username, password, [Permissions.COACH.value, Permissions.USER.value], user_data)
+    result = at.execute()
+
+    if result[1] == 200:
+        return jsonify(message='User registered successfully'), 201
+
+    return jsonify(message=result[0]), result[1]
 
 
 # Competitor registration endpoint
@@ -267,12 +207,17 @@ def register_compatitor():
     if not bool(re.match(r"^\d+$", bibn)):
         return jsonify(message='BIBno can only contain numbers'), 400
 
-    register_sattus = register(bibn, "123abcEFG?", club_name, [], True)
-    if register_sattus[1] == 201:
+    at = AppTransaction(master.pipeline())
+    user_data = {Personal_data.CLUB.value: club_name}
+    register_user(at, bibn, "123abcEFG?", [], user_data)
+    result = at.execute()
+
+    if result[1] == 200:
         master.hset(coach, "_" + bibn, name)
         master.hset(bibn, "name", name)
+        return jsonify(message='User registered successfully'), 201
 
-    return register_sattus
+    return jsonify(message=result[0]), result[1]
 
 
 @app.route('/coach/all_competitor', methods=['GET'])
@@ -347,7 +292,6 @@ def add_result():
             return jsonify(message='BIBno, date, result and event  are required'), 400
         result_data[k] = str(result_data[k])
 
-
     if not bool(re.match(r"^\d+$", result_data["result"])):
         return jsonify(message='result can only contain numbers'), 400
 
@@ -368,8 +312,9 @@ def add_result():
     id = str(master_results.incr("_" + result_data["bibn"] + "_No"))
     master_results.sadd("_" + result_data["bibn"] + "_Events", result_data["event"])
     bibn = result_data.pop("bibn")
+    event = result_data.pop("event")
     result_data = {(id + "_" + k): v for k, v in result_data.items()}
-    master_results.hset(("_" + bibn + "_"+result_data[id+"_"+"event"]), mapping=result_data)
+    master_results.hset(("_" + bibn + "_" + event), mapping=result_data)
 
     return jsonify(message="New result added"), 201
 
@@ -390,11 +335,12 @@ def get_events_for_competitor():
     slave = get_slave()
     if slave.hexists(current_user, "_" + bibn):
         slave = get_slave_results()
-        events = slave.smembers("_"+bibn+"_Events")
+        events = slave.smembers("_" + bibn + "_Events")
         events = [e.decode() for e in events]
         return jsonify(message=events), 200
 
     return jsonify(message="Competitor not found"), 404
+
 
 @app.route('/coach/competitor/result', methods=['GET'])
 @jwt_required()  # This decorator requires a valid JWT token
@@ -410,20 +356,17 @@ def get_results_for_competitor():
     bibn = str(data.get('bibn'))
     event = data.get('event')
 
-    if not event :
+    if not event:
         return jsonify(message='event  is required'), 400
-
-
 
     slave = get_slave()
     if slave.hexists(current_user, "_" + bibn):
         slave = get_slave_results()
-        events = slave.hgetall("_"+bibn+"_"+event)
-        events = {k.decode():v.decode() for k,v in events.items()}
+        events = slave.hgetall("_" + bibn + "_" + event)
+        events = {k.decode(): v.decode() for k, v in events.items()}
         return jsonify(message=events), 200
 
     return jsonify(message="Competitor not found"), 404
-
 
 
 if __name__ == "__main__":
