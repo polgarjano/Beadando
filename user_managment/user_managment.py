@@ -9,9 +9,12 @@ from user_managment.Permissions import Permissions
 def register_user(transaction: AppTransaction, username, password, permissions, user_data):
     pipe = transaction.pipe
     transaction.append_before_multi((user_before, (password, pipe, username), {}))
-
-    # Hash the password before storing
     transaction.append_after_multi((user_after, (password, permissions, pipe, user_data, username), {}))
+
+
+def reg_user(pipe, username, password, permissions, user_data):
+    return [[(user_before, (password, pipe, username), {})],
+            [(user_after, (password, permissions, pipe, user_data, username), {})]]
 
 
 def user_after(password, permissions, pipe, user_data, username):
@@ -37,6 +40,11 @@ def register_entyty(transaction: AppTransaction, name, data={}, message="entyty 
 
     transaction.append_before_multi((entyty_before, (name, pipe, message), {}))
     transaction.append_after_multi((entyty_after, (data, name, pipe), {}))
+
+
+def reg_entyty(pipe, name, data={}, message="entyty name already exists"):
+    return [[(entyty_before, (name, pipe, message), {})],
+            [(entyty_after, (data, name, pipe), {})]]
 
 
 def entyty_after(data, name, pipe):

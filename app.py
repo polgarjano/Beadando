@@ -8,7 +8,8 @@ from user_managment.Permissions import Permissions
 from user_managment.Personal_data import Personal_data
 from user_managment.System_data import System_data
 from user_managment.app_regexps import PASSWORD_REGEXP, DATE_REGEXP
-from user_managment.user_managment import register_user, register_entyty, authorization as aut_app, \
+from user_managment.user_managment import reg_user, reg_entyty, \
+    authorization as aut_app, \
     logout as logout_app, login as login_app
 from user_managment.app_transaction import AppTransaction
 
@@ -88,8 +89,9 @@ def register_administrator():
 
     at = AppTransaction(master.pipeline())
     user_data = {Personal_data.CLUB.value: club_name}
-    register_user(at, username, password, [Permissions.ADMINISTRATOR.value, Permissions.USER.value], user_data)
-    register_entyty(at, club_name, {"active": 1}, "Club already exists")
+    at.extend(
+        reg_user(at.pipe, username, password, [Permissions.ADMINISTRATOR.value, Permissions.USER.value], user_data))
+    at.extend(reg_entyty(at.pipe, club_name, {"active": 1}, "Club already exists"))
     result = at.execute()
 
     if result[1] == 200:
@@ -175,7 +177,8 @@ def register_coach():
 
     at = AppTransaction(master.pipeline())
     user_data = {Personal_data.CLUB.value: club_name}
-    register_user(at, username, password, [Permissions.COACH.value, Permissions.USER.value], user_data)
+    at.extend(
+        reg_user(at.pipe, username, password, [Permissions.COACH.value, Permissions.USER.value], user_data))
     result = at.execute()
 
     if result[1] == 200:
@@ -208,8 +211,9 @@ def register_compatitor():
         return jsonify(message='BIBno can only contain numbers'), 400
 
     at = AppTransaction(master.pipeline())
-    user_data = {Personal_data.CLUB.value: club_name}
-    register_user(at, bibn, "123abcEFG?", [], user_data)
+    user_data = {Personal_data.CLUB.value: club_name, Personal_data.NAME.value: name}
+    at.extend(
+        reg_user(at.pipe, bibn, "123abcEFG?", [], user_data))
     result = at.execute()
 
     if result[1] == 200:
